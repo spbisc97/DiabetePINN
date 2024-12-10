@@ -6,10 +6,13 @@ import matplotlib.pyplot as plt
 # %%
 # Define the model with disturbances and controls
 def bergman_model_with_control(y, t, p, D, U):
-    G, I = y
-    dGdt = -p["S_G"] * G - p["S_I"] * G * I + D(t)
-    dIdt = -I + U(t)
-    return [dGdt, dIdt]
+    G, X, I = y
+    V1 = 12# % L
+    n = 5/54#; % min
+    dGdt = -p["S_G"] * (G - p["G_b"]) - (X-p["X_b"]) * G + D(t)
+    dXdt = -p["S_X"] * (X-p["X_b"]) + p["S_I"] * (I - p["I_b"])
+    dIdt = -n * I + U(t)/V1
+    return [dGdt, dXdt,dIdt]
 
 # %%
 # Control and disturbance functions
@@ -25,11 +28,11 @@ def insulin_input(t):
 
 # %%
 # Initial conditions and parameters
-initial_conditions = [90, 10]  # Initial glucose and insulin levels
-params = {"S_G": 0.01, "S_I": 0.0001}  # Model parameters for Glucose Effectiveness and Insulin Sensitivity
+initial_conditions = [300,0.0, 15.0]  # Initial glucose and insulin levels
+params = {"S_G": 0.028735,"S_X": 0.028344, "S_I": 5.035e-5,'I_b':15.0,"X_b":15.0,"G_b":100.0}  # Model parameters for Glucose Effectiveness and Insulin Sensitivity ; % mU/L
 
 # Time points
-t = np.linspace(0, 500, 501)  # 8.3 hours, one measurement per minute
+t = np.linspace(0, 1000, 1001)  # 8.3 hours, one measurement per minute
 
 # %%
 # Solve ODE with controls and disturbances
