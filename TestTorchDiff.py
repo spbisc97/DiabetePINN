@@ -157,7 +157,7 @@ if __name__ == "__main__":
 
     ode_func = NeuralODEFunc(input_dim=3, hidden_dim=50)
     optimizer = optim.Adam(ode_func.parameters(), lr=0.01)
-    losses = train(ode_func, time_points, true_solution, optimizer, epochs=10)
+    losses = train(ode_func, time_points, true_solution, optimizer, epochs=300)
 
     with torch.no_grad():
         predicted_solution = odeint(ode_func, true_solution[0].to(device), time_points, method='rk4').cpu()
