@@ -96,6 +96,45 @@ def train(ode_func, time_points, true_solution, optimizer, epochs=1000):
 
     return losses
 
+
+def plot_results(time_points, true_solution, predicted_solution, control_inputs=0, disturbance_inputs=0):
+    plt.figure(figsize=(12, 8))
+    if control_inputs == 0:
+        control_inputs = torch.zeros_like(time_points)
+    if disturbance_inputs == 0:
+        disturbance_inputs = torch.zeros_like(time_points)
+
+    # Plotting Glucose levels
+    plt.subplot(2, 1, 1)  # Two rows, one column, first plot
+    plt.plot(time_points.numpy(), true_solution[:, 0].numpy(), label="True Glucose")
+    plt.plot(time_points.numpy(), predicted_solution[:, 0].numpy(), 'r--', label="Predicted Glucose")
+    plt.title("Glucose Dynamics Over Time")
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Glucose Level (mg/dL)")
+    plt.legend()
+
+    # Plotting Insulin and Meal inputs
+    plt.subplot(2, 1, 2)  # Two rows, one column, second plot
+    plt.step(time_points.numpy(), control_inputs, label="Insulin Input", where="post")
+    plt.step(time_points.numpy(), disturbance_inputs, label="Meal Input", where="post", linestyle='--')
+    plt.title("Control (Insulin) and Disturbance (Meal) Inputs Over Time")
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Input Levels")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_losses(losses):
+    plt.figure(figsize=(12, 6))
+    plt.plot(losses, label="Loss")
+    plt.yscale("log")
+    plt.title("Training Loss Over Time")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 # %%
 # Main script
 if __name__ == "__main__":
@@ -122,14 +161,8 @@ if __name__ == "__main__":
 
     with torch.no_grad():
         predicted_solution = odeint(ode_func, true_solution[0].to(device), time_points, method='rk4').cpu()
-    plt.plot(time_points.numpy(), true_solution[:, 0].numpy(), label="True Glucose")
-    plt.plot(time_points.numpy(), predicted_solution[:, 0].numpy(), '--', label="Predicted Glucose")
-    plt.xlabel('Time (minutes)')
-    plt.ylabel('Glucose Level (mg/dL)')
-    plt.legend()
-    plt.show()
+        
 
-    plt.plot(losses)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.show()
+    plot_results(time_points, true_solution, predicted_solution)
+    
+    plot_losses(losses)
