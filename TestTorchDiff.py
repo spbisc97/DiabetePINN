@@ -8,33 +8,37 @@ import matplotlib.pyplot as plt
 from torch.amp import autocast, GradScaler  # Mixed-precision utilities
 import time
 
+from BergmanTrueDynamics import BergmanTrueDynamics
 # %%
 # Disturbance (Meal) and Control (Insulin) functions
 def meal_input(t):
     if t == 60 or t == 180:  # Meals at minute 60 and 180
-        return 50.0  # Increase in glucose level
+        return 4.0  # Increase in glucose level
     return 0.0
 
 def insulin_input(t):
     if t == 30 or t == 120:  # Insulin injections at minute 30 and 120
         return 2.0  # Increase in insulin level
     return 0.0
-# %%
-class BergmanTrueDynamics(nn.Module):
-    def __init__(self, p1, p2, p3, G_b, I_b):
-        super().__init__()
-        self.p1 = p1
-        self.p2 = p2
-        self.p3 = p3
-        self.G_b = G_b
-        self.I_b = I_b
+# # %%
+# class BergmanTrueDynamics(nn.Module):
+#     def __init__(self, p1=0.028735, p2=0.028344, p3=5.035e-5, G_b=100.0, I_b=15.0, I_X=15.0):
+#         super().__init__()
+#         self.p1 = p1
+#         self.p2 = p2
+#         self.p3 = p3
+#         self.G_b = G_b
+#         self.I_b = I_b
+#         self.I_X = I_X 
+#         self.V1 = 12# % L
+#         self.n = 5/54#; % min
 
-    def forward(self, t, state):
-        G, X, I = state
-        dGdt = -self.p1 * (G - self.G_b) - X * G
-        dXdt = -self.p2 * X + self.p3 * (I - self.I_b) 
-        dIdt = torch.tensor(0.0, device=state.device)  # Keeping the device consistent
-        return torch.stack([dGdt, dXdt, dIdt])
+#     def forward(self, t, state, D=0, U=0):
+#         G, X, I = state
+#         dGdt = -self.p1 * (G - self.G_b) - (X-self.I_X) * G + D
+#         dXdt = -self.p2 * (X-self.I_X) + self.p3 * (I - self.I_b)
+#         dIdt = U/self.V1 - self.n*I
+#         return torch.stack([dGdt, dXdt, dIdt])
 
 
 
@@ -59,7 +63,7 @@ def generate_data(model, time_span, G0, X0, I0):
     initial_state = torch.tensor([G0, X0, I0], dtype=torch.float32)
     time_points = torch.linspace(0, time_span, steps=300)
     with torch.no_grad():
-        true_solution = odeint(model, initial_state, time_points)
+        true_solution = odeint(model, initial_state, time_points,method='rk4')
     return time_points, true_solution
 
 # %%
@@ -138,26 +142,20 @@ def plot_losses(losses):
 # %%
 # Main script
 if __name__ == "__main__":
-    # Parameters for the Bergman Minimal Model
-    G_b = 100.0  # Basal glucose level (mg/dL)
-    I_b = 15.0   # Basal insulin level (uU/mL)
-    p1 = 0.02    # Parameter for glucose decay
-    p2 = 0.025   # Parameter for insulin action decay
-    p3 = 0.0001  # Parameter for insulin sensitivity
 
     # Initial conditions (initial glucose, insulin action, insulin)
-    G0 = 300.0   # Initial glucose level (mg/dL)
-    X0 = 0.0     # Initial insulin action
+    G0 = 10.0   # Initial glucose level (mg/dL)
+    X0 = 15.0     # Initial insulin action
     I0 = 15.0    # Initial insulin level (uU/mL)
     time_span = 360  # Simulate for 180 minutes
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    true_model = BergmanTrueDynamics(p1, p2, p3, G_b, I_b)
+    true_model = BergmanTrueDynamics()
     time_points, true_solution = generate_data(true_model, time_span, G0, X0, I0)
 
     ode_func = NeuralODEFunc(input_dim=3, hidden_dim=50)
     optimizer = optim.Adam(ode_func.parameters(), lr=0.01)
-    losses = train(ode_func, time_points, true_solution, optimizer, epochs=300)
+    losses = train(ode_func, time_points, true_solution, optimizer, epochs=200)
 
     with torch.no_grad():
         predicted_solution = odeint(ode_func, true_solution[0].to(device), time_points, method='rk4').cpu()
