@@ -14,11 +14,11 @@ class BergmanTrueDynamics(nn.Module):
         self.V1 = 12# % L
         self.n = 5/54#; % min
 
-    def forward(self, t, state, D=0, U=3):
+    def forward(self, t, state, D=0, U=0):
         G, X, I = state
         dGdt = -self.p1 * (G - self.G_b) - (X-self.I_X) * G + D
         dXdt = -self.p2 * (X-self.I_X) + self.p3 * (I - self.I_b)
-        dIdt = U/self.V1 - self.n*I
+        dIdt = U/self.V1 - self.n*(I - self.I_b)
         return torch.stack([dGdt, dXdt, dIdt])
     
 
@@ -26,6 +26,7 @@ def generate_data(model, time_span, G0, X0, I0):
     initial_state = torch.tensor([G0, X0, I0], dtype=torch.float32)
     time_points = torch.linspace(0, time_span, steps=300)
     with torch.no_grad():
+        # true_solution = odeint(lambda t, y: ode_func(t,y,torch.tensor([control_inputs(t), disturbance_inputs(t)],dtype=torch.float32,),),initial_state,time_points,method="rk4",)
         true_solution = odeint(model, initial_state, time_points, method='rk4',rtol=1e-10, atol=1e-9)
     return time_points, true_solution
     
@@ -58,7 +59,7 @@ from torchdiffeq import odeint
 import numpy as np
 
 model = BergmanTrueDynamics()
-time_span = 100
+time_span = 10000
 G0 = 10.0
 X0 = 15.0
 I0 = 15.0

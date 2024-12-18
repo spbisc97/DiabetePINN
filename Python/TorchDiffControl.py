@@ -65,6 +65,8 @@ class NeuralODEFunc(nn.Module):
         return self.net(combined_input)
 
 
+
+
 # %%
 def dynamic_system(t, state, model, control_input, disturbance_input):
     D = disturbance_input
@@ -91,60 +93,7 @@ def loss_function(predicted, true):
     return ((predicted - true) ** 2).mean()
 
 
-# %%
-def train(
-    ode_func,
-    time_points,
-    true_solution,
-    control_inputs,
-    disturbance_inputs,
-    optimizer,
-    epochs=10,
-):
-    losses = []
 
-    device_name = "cuda" if torch.cuda.is_available() else "cpu"
-    device = torch.device(device_name)
-    ode_func.to(device)
-    time_points = time_points.to(device)
-    true_solution = true_solution.to(device)
-    initial_state = true_solution[0].to(device)
-
-    scaler = GradScaler()
-    start_time = time.time()
-
-    for epoch in range(epochs):
-        optimizer.zero_grad()
-        with autocast(device_name):
-            predicted_solution = odeint(
-                lambda t, y: ode_func(
-                    t,
-                    y,
-                    torch.tensor(
-                        [control_inputs(t), disturbance_inputs(t)],
-                        dtype=torch.float32,
-                    ),
-                ),
-                initial_state,
-                time_points,
-                method="rk4",
-            )
-
-            loss = loss_function(predicted_solution, true_solution)
-
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-
-        losses.append(loss.item())
-        if epoch % 100 == 0:
-            elapsed_time = time.time() - start_time
-            print(
-                f"Epoch {epoch}, Loss: {loss.item()}, Time: {elapsed_time:.2f} seconds"
-            )
-            start_time = time.time()
-
-    return losses
 
 
 def plot_results(
@@ -204,7 +153,91 @@ def plot_losses(losses):
     plt.grid(True)
     plt.show()
 
+def status_plot(ode_func, true_solution, time_points, insulin_input, meal_input, device):
+    with torch.no_grad():
+        predicted_solution = odeint(
+            lambda t, y: ode_func(
+                t,
+                y,
+                torch.tensor(
+                    [insulin_input(t), meal_input(t)],
+                    dtype=torch.float32,
+                ),
+            ),
+            true_solution[0].to(device),
+            time_points,
+            method="rk4",
+        ).cpu()
 
+    plot_results(time_points, true_solution, predicted_solution, control_inputs, disturbance_inputs)
+
+# %%
+def train(
+    ode_func,
+    time_points,
+    true_solution,
+    control_inputs,
+    disturbance_inputs,
+    optimizer,
+    epochs=10,
+):
+    losses = []
+
+    device_name = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device(device_name)
+    ode_func.to(device)
+    time_points = time_points.to(device)
+    true_solution = true_solution.to(device)
+    initial_state = true_solution[0].to(device)
+    
+    minibatch_size = 64
+    minibatch_generator = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(time_points, true_solution, control_inputs, disturbance_inputs),
+        batch_size=minibatch_size,
+        shuffle=False,
+    )
+
+    scaler = GradScaler()
+    start_time = time.time()
+
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        with autocast(device_name):
+            predicted_solution = odeint(
+                lambda t, y: ode_func(
+                    t,
+                    y,
+                    torch.tensor(
+                        [control_inputs(t), disturbance_inputs(t)],
+                        dtype=torch.float32,
+                    ),
+                ),
+                initial_state,
+                time_points,
+                method="rk4",
+                rtol=1e-10, atol=1e-9
+            )
+            loss =torch.nn.L1Loss()(predicted_solution, true_solution)
+            
+            #loss = loss_function(predicted_solution, true_solution)
+            #loss = ((predicted_solution - true_solution)).mean()
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+        losses.append(loss.item())
+        if epoch % 10 == 0:
+            elapsed_time = time.time() - start_time
+            print(
+                f"Epoch {epoch}, Loss: {loss.item()}, Time: {elapsed_time:.2f} seconds"
+            )
+            start_time = time.time()
+            if loss.item() < 1e-3:
+                #save_model(ode_func, optimizer, epoch, loss.item())
+                break
+
+    return losses
 # %%
 # Main script
 if __name__ == "__main__":
@@ -226,7 +259,7 @@ if __name__ == "__main__":
     )
 
     ode_func = NeuralODEFunc(state_dim=3, hidden_dim=50, ext_input_dim=2)
-    optimizer = optim.Adam(ode_func.parameters(), lr=0.01)
+    optimizer = optim.Adam(ode_func.parameters(), lr=0.001, weight_decay=1e-4)
     losses = train(
         ode_func,
         time_points,
@@ -234,26 +267,11 @@ if __name__ == "__main__":
         insulin_input,
         meal_input,
         optimizer,
-        epochs=100,
+        epochs=10,
     )
 
-    with torch.no_grad():
-        predicted_solution = odeint(
-            lambda t, y: ode_func(
-                t,
-                y,
-                torch.tensor(
-                    [insulin_input(t), meal_input(t)],
-                    dtype=torch.float32,
-                ),
-            ),
-            true_solution[0].to(device),
-            time_points,
-            method="rk4",
-        ).cpu()
-
-    plot_results(time_points, true_solution, predicted_solution, control_inputs, disturbance_inputs)
-
+    status_plot(ode_func, true_solution, time_points, insulin_input, meal_input, device)
+    
     plot_losses(losses)
 
 # %%

@@ -155,7 +155,7 @@ if __name__ == "__main__":
     ode_func = NeuralODEFunc(state_dim=3, hidden_dim=50, ext_input_dim=2)
     optimizer = optim.Adam(ode_func.parameters(), lr=0.01)
 
-    losses = train(ode_func, time_points, true_solution, control_inputs, disturbance_inputs, optimizer, epochs=100)
+    losses = train(ode_func, time_points, true_solution, control_inputs, disturbance_inputs, optimizer, epochs=200)
 
     with torch.no_grad():
         ext_inputs = torch.stack([control_inputs, disturbance_inputs], dim=-1)
