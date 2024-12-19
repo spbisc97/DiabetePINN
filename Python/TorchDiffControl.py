@@ -13,14 +13,48 @@ from BergmanTrueDynamics import BergmanTrueDynamics
 # %%
 # Disturbance (Meal) and Control (Insulin) functions
 def meal_input(t):
-    if t == 60 or t == 180:  # Meals at minute 60 and 180
+    # Simulate meal intake with a more realistic profile
+    if 60 <= t < 90 or 180 <= t < 210:  # Meals at minute 60-90 and 180-210
         return 4.0  # Increase in glucose level
+    if 150 <= t < 180:
+        return 3.0
+    if 240 <= t < 270:
+        return 2.0
+    if 330 <= t < 360:
+        return 1.0
+    if 420 <= t < 450:
+        return 2.0
+    if 510 <= t < 540:
+        return 3.0
+    if 600 <= t < 630:
+        return 4.0
+    if 690 <= t < 720:
+        return 3.0
+    if 780 <= t < 810:
+        return 2.0
     return 0.0
 
 
 def insulin_input(t):
-    if 29 <t< 31 or 119 <t <121:  # Insulin injections at minute 30 and 120
+    # Simulate insulin injections with a more realistic profile
+    if 30 <= t < 35 or 120 <= t < 125:  # Insulin injections at minute 30-35 and 120-125
         return 5.0  # Increase in insulin level
+    if 210 <= t < 215:
+        return 1.0
+    if 270 <= t < 275:
+        return 2.0
+    if 330 <= t < 335:
+        return 3.0
+    if 390 <= t < 395:
+        return 4.0
+    if 450 <= t < 455:
+        return 5.0
+    if 510 <= t < 515:
+        return 6.0
+    if 570 <= t < 575:
+        return 2.0
+    if 630 <= t < 635:
+        return 3.0
     return 0.0
 
 
@@ -110,7 +144,7 @@ def plot_results(
         disturbance_inputs = torch.zeros_like(time_points)
 
     # Plotting Glucose levels
-    plt.subplot(2, 1, 1)  # Two rows, one column, first plot
+    plt.subplot(4, 1, 1)  # Two rows, one column, first plot
     plt.plot(time_points.numpy(), true_solution[:, 0].numpy(), label="True Glucose")
     plt.plot(
         time_points.numpy(),
@@ -122,9 +156,37 @@ def plot_results(
     plt.xlabel("Time (minutes)")
     plt.ylabel("Glucose Level (mg/dL)")
     plt.legend()
+    
+    # Plotting Insulin Action levels
+    plt.subplot(4, 1, 2)  # Four rows, one column, second plot
+    plt.plot(time_points.numpy(), true_solution[:, 1].numpy(), label="True Insulin Action")
+    plt.plot(
+        time_points.numpy(),
+        predicted_solution[:, 1].numpy(),
+        "r--",
+        label="Predicted Insulin Action",
+    )
+    plt.title("Insulin Action Dynamics Over Time")
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Insulin Action Level")
+    plt.legend()
 
-    # Plotting Insulin and Meal inputs
-    plt.subplot(2, 1, 2)  # Two rows, one column, second plot
+    # Plotting Insulin levels
+    plt.subplot(4, 1, 3)  # Four rows, one column, third plot
+    plt.plot(time_points.numpy(), true_solution[:, 2].numpy(), label="True Insulin")
+    plt.plot(
+        time_points.numpy(),
+        predicted_solution[:, 2].numpy(),
+        "r--",
+        label="Predicted Insulin",
+    )
+    plt.title("Insulin Dynamics Over Time")
+    plt.xlabel("Time (minutes)")
+    plt.ylabel("Insulin Level (uU/mL)")
+    plt.legend()
+    
+        # Plotting Insulin and Meal inputs
+    plt.subplot(4, 1, 4)  # Two rows, one column, second plot
     plt.step(time_points.numpy(), control_inputs, label="Insulin Input", where="post")
     plt.step(
         time_points.numpy(),
@@ -169,7 +231,7 @@ def status_plot(ode_func, true_solution, time_points, insulin_input, meal_input,
             method="rk4",
         ).cpu()
 
-    plot_results(time_points, true_solution, predicted_solution, control_inputs, disturbance_inputs)
+    plot_results(time_points.cpu(), true_solution.cpu(), predicted_solution, torch.tensor([insulin_input(t.item()) for t in time_points], dtype=torch.float32), torch.tensor([meal_input(t.item()) for t in time_points], dtype=torch.float32))
 
 # %%
 def train(
@@ -180,19 +242,23 @@ def train(
     disturbance_inputs,
     optimizer,
     epochs=10,
+    plot_freq=10,
+    info_freq=10,
 ):
     losses = []
 
     device_name = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device_name)
     ode_func.to(device)
+    
     time_points = time_points.to(device)
     true_solution = true_solution.to(device)
     initial_state = true_solution[0].to(device)
     
-    minibatch_size = 64
+    minibatch_size = 128
+    # dynamics=torch.cat((time_points,true_solution,control_inputs, disturbance_inputs)).to(device)
     minibatch_generator = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(time_points, true_solution, control_inputs, disturbance_inputs),
+        torch.utils.data.TensorDataset(time_points, true_solution),
         batch_size=minibatch_size,
         shuffle=False,
     )
@@ -201,41 +267,45 @@ def train(
     start_time = time.time()
 
     for epoch in range(epochs):
-        optimizer.zero_grad()
-        with autocast(device_name):
-            predicted_solution = odeint(
-                lambda t, y: ode_func(
-                    t,
-                    y,
-                    torch.tensor(
-                        [control_inputs(t), disturbance_inputs(t)],
-                        dtype=torch.float32,
-                    ),
-                ),
-                initial_state,
-                time_points,
-                method="rk4",
-                rtol=1e-10, atol=1e-9
-            )
-            loss =torch.nn.L1Loss()(predicted_solution, true_solution)
-            
-            #loss = loss_function(predicted_solution, true_solution)
-            #loss = ((predicted_solution - true_solution)).mean()
-
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        for batch_time_points, batch_true_solution in minibatch_generator:
+            if np.random.rand() < 0.1:
+                pass
+            else:
+                optimizer.zero_grad()
+                with autocast(device_name):
+                    predicted_solution = odeint(
+                        lambda t, y: ode_func(
+                            t,
+                            y,
+                            torch.tensor(
+                            [control_inputs(t), disturbance_inputs(t)],
+                            dtype=torch.float32,
+                        ),
+                        ),
+                        batch_true_solution[0].to(device),
+                        batch_time_points.to(device),
+                        method="rk4",
+                        rtol=1e-10, atol=1e-9
+                    )
+                    loss = torch.nn.L1Loss()(predicted_solution, batch_true_solution.to(device))
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
 
         losses.append(loss.item())
-        if epoch % 10 == 0:
+        if epoch % info_freq == 0:
             elapsed_time = time.time() - start_time
             print(
                 f"Epoch {epoch}, Loss: {loss.item()}, Time: {elapsed_time:.2f} seconds"
             )
             start_time = time.time()
-            if loss.item() < 1e-3:
-                #save_model(ode_func, optimizer, epoch, loss.item())
-                break
+        if epoch % plot_freq == 0:
+            status_plot(ode_func, true_solution, time_points, insulin_input, meal_input, device)
+            #save the model with date and time as the name
+            plot_losses(losses)
+            torch.save(ode_func.state_dict(), f"models/model_{time.strftime('%Y%m%d-%H%M%S')}.pt")
+
 
     return losses
 # %%
@@ -250,8 +320,8 @@ if __name__ == "__main__":
     time_span = 600  # Simulate for 180 minutes
     time_points = torch.linspace(0, time_span, time_span+1)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    control_inputs = torch.tensor([insulin_input(t.item()) for t in time_points])
-    disturbance_inputs = torch.tensor([meal_input(t.item()) for t in time_points])
+    control_inputs = torch.tensor([insulin_input(t.item()) for t in time_points], dtype=torch.float32)
+    disturbance_inputs = torch.tensor([meal_input(t.item()) for t in time_points], dtype=torch.float32)
 
     true_model = BergmanTrueDynamics()
     time_points, true_solution = generate_data(
@@ -267,7 +337,9 @@ if __name__ == "__main__":
         insulin_input,
         meal_input,
         optimizer,
-        epochs=10,
+        epochs=1000,
+        plot_freq=20,
+        info_freq=10,
     )
 
     status_plot(ode_func, true_solution, time_points, insulin_input, meal_input, device)
